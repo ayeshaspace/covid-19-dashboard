@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="style2.css"/>
+    <link rel="stylesheet" href="map-style.css" />
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="info-box">
+        <h2>COVID 19 DASHBOARD</h2>
+        <div class="countries-container">
+            <label for="countries" class="bold-label">Select a Country:</label>
+            <select id="countries">
+                <!-- Add a "World" option as the first item -->
+                <option value="world">World/Global</option>
+                <!-- The rest of the dropdown options will be populated dynamically using JavaScript -->
+            </select>
+        </div>
+    </div>
+
+    <!-- Info boxes for Coronavirus cases, Recovered, and Deaths -->
+    <div class="info-box" id="covid-info-box">
+        <div class="cases-box">
+            <h3>Cases</h3>
+            <p id="cases-count">Loading...</p>
+        </div>
+        <div class="recovered-box">
+            <h3>Recovered</h3>
+            <p id="recovered-count">Loading...</p>
+        </div>
+        <div class="deaths-box">
+            <h3>Deaths</h3>
+            <p id="deaths-count">Loading...</p>
+        </div>
+    </div>
+    <div class="map-container">
+        <h3 class="bold-label">Cases by Country</h3>
+        <div id="map"></div>
+        <div id="country-list"></div>
+        <!-- Chart container -->
+        <div class="chart-container">
+            <canvas id="worldwide-chart" width="400" height="200"></canvas>
+        </div>
+    </div>
+    <script>
+        // Function to fetch COVID-19 data for the selected country
+        function fetchCovidData(country) {
+            // Make a GET request to the API for the selected country or worldwide
+            var apiUrl = country === 'world' ? 'https://disease.sh/v3/covid-19/all' : 'https://disease.sh/v3/covid-19/countries/' + country;
+            $.get(apiUrl, function (data) {
+                // Update the info boxes with the new data
+                $("#cases-count").text(data.cases);
+                $("#recovered-count").text(data.recovered);
+                $("#deaths-count").text(data.deaths);
+
+                // Call the function to update the map with the new data
+                if (country === 'world') {
+                    updateMapBubbles(data.cases, data.countryInfo);
+                } else {
+                    updateMapBubbles(data.cases, data.countryInfo, data.country);
+                }
+            });
+        }
+
+        // Event listener for when the user selects a country from the dropdown
+        $("#countries").on("change", function () {
+            var selectedCountry = $(this).val();
+            fetchCovidData(selectedCountry);
+        });
+
+        // Function to populate the countries dropdown sorted by cases count in descending order
+        function populateCountriesDropdownSorted() {
+            // Make a GET request to the API
+            $.get("https://disease.sh/v3/covid-19/countries", function (data) {
+                // Sort the data in descending order based on cases count
+                data.sort(function (a, b) {
+                    return b.cases - a.cases;
+                });
+
+                // Get the dropdown element by its ID
+                var dropdown = $("#countries");
+
+                // Loop through the sorted data to create the options
+                for (var i = 0; i < data.length; i++) {
+                    // Create a new option element
+                    var option = $("<option></option>")
+                        .attr("value", data[i].country) // Set the value attribute to the country name
+                        .text(data[i].country); // Set the text of the option to the country name
+
+                    // Append the option to the dropdown
+                    dropdown.append(option);
+                }
+
+                // Fetch COVID-19 data for the default selected country (World/Global)
+                fetchCovidData("world");
+            });
+        }
+
+        // Call the function to populate the dropdown with sorted data when the page loads
+        $(document).ready(function () {
+            populateCountriesDropdownSorted();
+        });
+
+        // Additional event listener for keyboard arrow keys to navigate the dropdown
+        $(document).on("keydown", "#countries", function (e) {
+            var selectedCountry = $("#countries").val();
+            var options = $("#countries option");
+            var selectedIndex = options.index(options.filter(":selected"));
+
+            if (e.keyCode === 40) {
+                // Down arrow key
+                if (selectedIndex < options.length - 1) {
+                    selectedIndex++;
+                }
+            } else if (e.keyCode === 38) {
+                // Up arrow key
+                if (selectedIndex > 0) {
+                    selectedIndex--;
+                }
+            }
+
+            // Set the new selected country and trigger the change event to fetch data
+            $("#countries").val(options.eq(selectedIndex).val()).trigger("change");
+        });
+
+        // Define a global variable for the Leaflet map
+        var map;
+
+        // Function to create or update the bubbles on the map
+        function updateMapBubbles(selectedCountryCases, countryInfo, selectedCountry) {
+            // If the map is not initialized, create it
+            if (!map) {
+                map = L.map('map').setView([0, 0], 2); // Set initial view to the world
+
+                // Add a tile layer to the map (you can choose a different one if you prefer)
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+            }
+
+            // Clear previous markers
+            map.eachLayer(function (layer) {
+                if (layer instanceof L.CircleMarker) {
+                    map.removeLayer(layer);
+                }
+            });
+
+            // Create a new circle marker representing worldwide COVID-19 cases
+            if (selectedCountryCases > 0) {
+                $.get("https://disease.sh/v3/covid-19/countries", function (data) {
+                    // Loop through the data to create circle markers for each country
+                    for (var i = 0; i < data.length; i++) {
+                        var lat = data[i].countryInfo.lat;
+                        var long = data[i].countryInfo.long;
+                        var cases = data[i].cases;
+                        var countryName = data[i].country;
+                        var recovered = data[i].recovered;
+                        var deaths = data[i].deaths;
+                        var countryFlag = data[i].countryInfo.flag;
+
+                        // Add the circle marker to the map with a popup
+                        var marker = L.circleMarker([lat, long], {
+                            radius: Math.sqrt(cases) / 250, // Adjust the bubble size based on cases
+                            color: 'red', // Bubble border color
+                            fillColor: 'rgba(255, 0, 0, 0.7)', // Bubble fill color
+                            fillOpacity: 0.3, // Bubble fill opacity
+                        }).addTo(map);
+
+                        // Create the popup content with the country information
+                        var popupContent = `
+                            <strong>${countryName}</strong><br>
+                            <img src="${countryFlag}" alt="${countryName}" width="20"><br>
+                            Cases: ${cases}<br>
+                            Recovered: ${recovered}<br>
+                            Deaths: ${deaths}
+                        `;
+
+                        // Bind the popup to the marker
+                        marker.bindPopup(popupContent);
+                    }
+
+                    // If a specific country is selected from the dropdown, also add its bubble to the map
+                    if (selectedCountry && selectedCountry !== 'world') {
+                        var lat = countryInfo.lat;
+                        var long = countryInfo.long;
+                        var cases = selectedCountryCases;
+                        var countryName = selectedCountry;
+                        var recovered = $("#recovered-count").text(); // Get recovered count from the displayed value
+                        var deaths = $("#deaths-count").text(); // Get deaths count from the displayed value
+
+                        // Add the circle marker for the selected country with a popup
+                        var marker = L.circleMarker([lat, long], {
+                            radius: Math.sqrt(cases) / 250, // Adjust the bubble size based on cases
+                            color: 'blue', // Bubble border color for the selected country
+                            fillColor: 'rgba(0, 0, 255, 0.7)', // Bubble fill color for the selected country
+                            fillOpacity: 0.3, // Bubble fill opacity
+                        }).addTo(map);
+
+                        // Create the popup content for the selected country
+                        var popupContent = `
+                            <strong>${countryName}</strong><br>
+                            Cases: ${cases}<br>
+                            Recovered: ${recovered}<br>
+                            Deaths: ${deaths}
+                        `;
+
+                        // Bind the popup to the marker
+                        marker.bindPopup(popupContent);
+                    }
+
+                    // Populate the list on the right side of the map
+                    populateCountryList(data);
+                });
+            }
+        }
+
+        // Function to populate the country list on the right side of the map
+        function populateCountryList(data) {
+            var countryListDiv = $("#country-list");
+
+            // Clear previous data
+            countryListDiv.empty();
+
+            // Sort the data in descending order based on cases count
+            data.sort(function (a, b) {
+                return b.cases - a.cases;
+            });
+
+            // Create a new list element
+            var list = $("<ul></ul>");
+
+            // Loop through the data to create list items for each country
+            for (var i = 0; i < data.length; i++) {
+                var countryName = data[i].country;
+                var cases = data[i].cases;
+
+                // Create the list item with the country name and cases count
+                var listItem = $("<li></li>").text(`${countryName}: ${cases} cases`);
+
+                // Append the list item to the list
+                list.append(listItem);
+            }
+
+            // Append the list to the countryListDiv
+            countryListDiv.append(list);
+        }
+// Function to fetch worldwide historical data for the chart
+function fetchWorldwideChartData() {
+            $.get('https://disease.sh/v3/covid-19/historical/all', function (historicalData) {
+                var casesData = historicalData.cases;
+                var months = Object.keys(casesData);
+                var casesCount = Object.values(casesData);
+
+                updateWorldwideChart(months, casesCount);
+            });
+        }
+        // Function to update the worldwide live cases chart with filled area under the line
+    function updateWorldwideChart(months, casesCount) {
+        var ctx = document.getElementById('worldwide-chart').getContext('2d');
+        var chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: months,
+                datasets: [{
+                    label: 'Worldwide Cases',
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.2)', // Area fill color
+                    data: casesCount,
+                    fill: true, // To fill the area under the line
+                }]
+            },
+            options: {
+                scales: {
+                    x: {
+                        display: true,
+                        title: {
+                            display: true,
+                            text: 'Month'
+                        }
+                    },
+                    y: {
+                        display: true,
+                        title: {
+                            display: true,
+                            text: 'Cases'
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Call the function to fetch and update the worldwide live cases chart
+    fetchWorldwideChartData();
+
+    </script>
+</body>
+</html>
+
+
+
+
+
